@@ -1,6 +1,4 @@
 # MFF-LncLoc: Subcellular Localization Prediction of lncRNAs Based on Multi-Feature Fusion Using Transformers
-## To the BiBM reviewers
-Due to the system's requirement that the number of uploaded paper pages should be within 8, we have placed the appendix section under directory /paper/Supplementary Materials.pdf on GitHub.
 
 ## Introduction
 we propose MFF-LncLoc, a prediction model based on Transformers. Utilizing the Transformer's capability to capture contextual and positional information, MFF-LncLoc processes embedding matrices from a non-overlapping trinucleotide method. While traditional models focus on k-mer frequency features, MFF-LncLoc integrates transcript composition, sequence properties, secondary structure features, and nucleotide structural information. Combining all the aforementioned features, the resulting data is processed by a CNN module to extract local sequence features, and a fully connected layer predicts subcellular localization.
