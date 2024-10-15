@@ -102,7 +102,7 @@ class NaiveNet(nn.Module):
         in_features_2 = (in_features_1 - 2) // 2 + 1
         in_features_3 = (in_features_2 - 2) // 2 + 1
         self.Flatten = nn.Flatten()
-        self.SharedFC = nn.Sequential(nn.Linear(in_features=input_size * in_features_3, out_features=input_size-15),
+        self.SharedFC = nn.Sequential(nn.Linear(in_features=input_size * in_features_3, out_features=input_size-Fea),
                                       nn.ReLU(),
                                       nn.Dropout()
                                       )
@@ -112,17 +112,6 @@ class NaiveNet(nn.Module):
         output = self.Flatten(x)  # flatten output
         outs = self.SharedFC(output)
         return outs
-
-def atom_features(atom):
-    return np.array(one_of_k_encoding_unk(atom.GetSymbol(),
-                                          ['C', 'N', 'O', 'S', 'F', 'Si', 'P', 'Cl', 'Br', 'Mg', 'Na', 'Ca', 'Fe', 'As',
-                                           'Al', 'I', 'B', 'V', 'K', 'Tl', 'Yb', 'Sb', 'Sn', 'Ag', 'Pd', 'Co', 'Se',
-                                           'Ti', 'Zn', 'H', 'Li', 'Ge', 'Cu', 'Au', 'Ni', 'Cd', 'In', 'Mn', 'Zr', 'Cr',
-                                           'Pt', 'Hg', 'Pb', 'Unknown']) +
-                    one_of_k_encoding(atom.GetDegree(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) +
-                    one_of_k_encoding_unk(atom.GetTotalNumHs(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) +
-                    one_of_k_encoding_unk(atom.GetImplicitValence(), [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10]) +
-                    [atom.GetIsAromatic()])
 
 def one_of_k_encoding(x, allowable_set):
     if x not in allowable_set:
@@ -135,96 +124,12 @@ def one_of_k_encoding_unk(x, allowable_set):
         x = allowable_set[-1]
     return list(map(lambda s: x == s, allowable_set))
 
-def smile_to_graph(smile):
-    mol = Chem.MolFromSmiles(smile)
-
-    c_size = mol.GetNumAtoms()
-
-    features = []
-    for atom in mol.GetAtoms():
-        feature = atom_features(atom)
-        features.append(feature / sum(feature))
-
-    edges = []
-    for bond in mol.GetBonds():
-        edges.append([bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()])
-    g = nx.Graph(edges).to_directed()
-    edge_index = []
-    for e1, e2 in g.edges:
-        edge_index.append([e1, e2])
-
-    return c_size, features, edge_index
-
-class GCNNet(torch.nn.Module):
-    def __init__(self, n_output=2,num_features_xd=78, dropout=0.2,emb_dim = 32):
-
-        super(GCNNet, self).__init__()
-          
-        self.relu = nn.ReLU()
-        self.dropout = nn.Dropout(dropout)
-        # SMILES1 graph branch
-        self.n_output = n_output
-        self.drug1_conv1 = GCNConv(num_features_xd, num_features_xd*2)
-        # self.drug1_conv2 = GCNConv(num_features_xd, num_features_xd*2)
-        # self.drug1_conv3 = GCNConv(num_features_xd*2, num_features_xd * 4)
-        self.drug1_fc_g1 = torch.nn.Linear(num_features_xd*2, emb_dim)
-        self.final = torch.nn.Linear(emb_dim + num_features_xd*2, emb_dim)
-  
-
-    def forward(self,input):
-        SMILES_ATCG = { "Adenosine":"C1=NC(=C2C(=N1)N(C=N2)C3C(C(C(O3)CO)O)O)N",
-                        "Thymidine":"CC1=CN(C(=O)NC1=O)C2CC(C(O2)CO)O",
-                        "Cytidine":"C1=CN(C(=O)N=C1N)C2C(C(C(O2)CO)O)O",
-                        "Guanosine":"C1=NC2=C(N1C3C(C(C(O3)CO)O)O)N=C(NC2=O)N"} 
-        smile_graph = {}
-        for smile in ["Adenosine","Thymidine","Cytidine","Guanosine"]:
-            g = smile_to_graph(SMILES_ATCG[smile])
-            smile_graph[smile] = g 
-        smiles = ["Adenosine","Thymidine","Cytidine","Guanosine"]
-        features_list = []
-        edge_index_list = []
-        batch = []
-        batchLL = []
-
-        for smile in smiles:
-            g = smile_graph[smile]
-            batchLL.append(g[0])
-            for i in g[1]:
-                features_list.append(i)
-            for j in g[2]:
-                edge_index_list.append(j)
-        
-        for _ in range(int(batchLL[0])):
-            batch.append(0)
-        for _ in range(int(batchLL[1])):
-            batch.append(1)
-        for _ in range(int(batchLL[2])):
-            batch.append(2)
-        for _ in range(int(batchLL[3])):
-            batch.append(3)
-
-        GCNData = DATA.Data(x=torch.Tensor(features_list),
-                            edge_index= torch.LongTensor(edge_index_list).transpose(1, 0),batch = torch.LongTensor(batch))
-        # data1 = DataLoader(GCNData, batch_size=218, shuffle=None)
-
-        # for batch_data in data1:
-        x1, edge_index1, batch1 = GCNData.x.to(input.device), GCNData.edge_index.to(input.device), GCNData.batch.to(input.device)
-        x1 = self.drug1_conv1(x1, edge_index1)
-        # x1 = self.drug1_conv2(x1, edge_index1)
-        # x1 = self.drug1_conv3(x1, edge_index1)
-        x1 = self.dropout(self.relu(x1))
-        x1 = gmp(x1, batch1)      
-        x1 = self.relu(self.drug1_fc_g1(x1))
-
-        return x1
-
 
 class Model(nn.Module):
     def __init__(self, vocab_size, emb_dim, part_num, features_num,  p_drop, h, hidden_size, outputs_size):
         super(Model, self).__init__()
 
         #embedding
-        self.word_embeddings2 = GCNNet(emb_dim = emb_dim)
         self.word_embeddings = nn.Embedding(vocab_size, emb_dim, padding_idx=0)
         self.weight1 = nn.Parameter(torch.randn(emb_dim))
         self.weight2 = nn.Parameter(torch.randn(emb_dim))
@@ -255,58 +160,17 @@ class Model(nn.Module):
         self.first_linear.weight.data.uniform_(-init_range, init_range)
         self.second_linear.bias.data.zero_()
         self.second_linear.weight.data.uniform_(-init_range, init_range)
-    
-    def smiles_embeddings(self,input):
-        smi_embedding = self.word_embeddings2(input)
-        SMI_em = {}
-        SMI_em['A'] = smi_embedding[0]
-        SMI_em['T'] = smi_embedding[1]
-        SMI_em['C'] = smi_embedding[2]
-        SMI_em['G'] = smi_embedding[3]
-        import json
-        file_path = VOCAB_PATH0
-        with open(file_path, 'r', encoding='utf-8') as file:
-            data = json.load(file)
-        swapped_dict = {value: key for key, value in data.items()}
-        sd = []
-
-        for i in swapped_dict.keys():
-            v = []
-            if i != 0:
-                for j in swapped_dict[i]:
-                    v.append(SMI_em[j])
-                sd.append(torch.mean(torch.cat(v, dim=0).view(TOKEN_LEN,PART_NUM), dim=0))
-            else:
-                sd.append(torch.randn(PART_NUM, requires_grad=True, device=smi_embedding.device))
-        sd = torch.stack(sd)
-        smi_embed = []  
-
-        for num_1 in input:
-            temp_1 = []
-            for num_2 in num_1:
-                temp_2 = [sd[int(num_3)] for num_3 in num_2]
-                temp_1.append(torch.stack(temp_2, dim=0))
-            smi_embed.append(torch.stack(temp_1, dim=0))
-        smi_embed = torch.stack(smi_embed, dim=0)
-
-        return smi_embed
 
 
     def subsequence_embedding(self, inputs):  # torch.Size([batch, part_num, part_len-3+1])
         outputs = []
-        # output_smiles = torch.mean(self.smiles_embeddings(inputs), dim=2)
         for part_idx in range(inputs.shape[1]):
-            # output = F.one_hot(inputs[:, part_idx, :], num_classes=65).float()
             output = self.word_embeddings(inputs[:, part_idx, :])  # torch.Size([batch, part_len-3+1, emb_dim])
             output = torch.transpose(output, dim0=2, dim1=1)  # torch.Size([batch, emb_dim, part_len-3+1])
-            # output = self.cnn_layer(output)
             output = self.avg_pool(output)  # torch.Size([batch, emb_dim, 1])
             outputs.append(output)
         outputs = torch.cat(outputs, dim=2)  # torch.Size([batch, emb_dim, part_num])
-        # weighted_tensor1 = output_smiles * self.weight1.view(1, PART_NUM, 1)
-        # weighted_tensor2 = outputs * self.weight2.view(1, PART_NUM, 1)
-        # output_tensor = weighted_tensor1 + weighted_tensor2
-        
+
         return outputs
     
     def connect_embedding(self, inputs0, inputs1, inputs2):
@@ -314,19 +178,6 @@ class Model(nn.Module):
         embed1 = self.subsequence_embedding(inputs1)
         embed2 = self.subsequence_embedding(inputs2)
         return embed0, embed1, embed2
-
-    # def connect_embedding(self, inputs0, inputs1, inputs2):
-    #     with ThreadPoolExecutor() as executor:
-    #         future0 = executor.submit(self.subsequence_embedding, inputs0)
-    #         future1 = executor.submit(self.subsequence_embedding, inputs1)
-    #         future2 = executor.submit(self.subsequence_embedding, inputs2)
-            
-    #         embed0 = future0.result()
-    #         embed1 = future1.result()
-    #         embed2 = future2.result()
-            
-    #     return embed0, embed1, embed2
-
 
     def average(self, embed0, embed1, embed2):
         result = []
